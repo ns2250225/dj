@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatContainer = document.getElementById('chat-container');
     const playPauseBtn = document.getElementById('play-pause-btn');
     const volumeSlider = document.getElementById('volume-slider');
+    const playlistContainer = document.getElementById('playlist-container');
+    const queueCount = document.getElementById('queue-count');
     
     // Player Elements
     const currentTrackName = document.getElementById('current-track-name');
@@ -26,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // State
     let isPlaying = false;
     let isTtsPlaying = false;
+    let playlistHistory = [];
 
     // --- Theme Logic ---
     btnDark.addEventListener('click', () => {
@@ -147,6 +150,49 @@ document.addEventListener('DOMContentLoaded', () => {
         timeCurrent.textContent = '0:00';
     });
 
+    // --- Playlist Logic ---
+    function addToPlaylist(songData) {
+        playlistHistory.push(songData);
+        queueCount.textContent = playlistHistory.length;
+        renderPlaylist();
+    }
+
+    function renderPlaylist() {
+        playlistContainer.innerHTML = '';
+        playlistHistory.forEach((song, index) => {
+            const li = document.createElement('li');
+            li.className = 'playlist-item';
+            li.innerHTML = `
+                <div class="song-info">
+                    <span class="s-name">${song.song_name}</span>
+                    <span class="s-artist">${song.artist}</span>
+                </div>
+                <i class="fas fa-play play-icon"></i>
+            `;
+            li.addEventListener('click', () => {
+                playHistorySong(song);
+            });
+            playlistContainer.appendChild(li);
+        });
+        playlistContainer.scrollTop = playlistContainer.scrollHeight;
+    }
+
+    function playHistorySong(songData) {
+        ttsPlayer.pause();
+        isTtsPlaying = false;
+        
+        musicPlayer.src = songData.music_url;
+        currentTrackName.textContent = `${songData.song_name} - ${songData.artist}`;
+        currentTrackStatus.textContent = '播放记录...';
+        
+        musicPlayer.play().then(() => {
+            setPlayState(true);
+        }).catch(err => {
+            console.error("Play prevented", err);
+            setPlayState(false);
+        });
+    }
+
     // --- Chat & API Logic ---
     function addMessage(sender, content) {
         const now = new Date();
@@ -192,6 +238,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             const data = await response.json();
+            
+            // Add to Playlist
+            addToPlaylist(data);
             
             // Add DJ Message
             addMessage('dj', data.dj_text);

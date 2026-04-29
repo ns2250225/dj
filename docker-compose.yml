@@ -5,7 +5,7 @@ services:
     build: .
     container_name: dj_app
     ports:
-      - "8000:8000"
+      - "9009:8000"
     volumes:
       # 将本地 static/audio 映射到容器，以便生成的音频文件能持久化（可选）
       - ./static/audio:/app/static/audio

@@ -79,8 +79,8 @@
 
                 <!-- 队列标题 -->
                 <div class="section-divider">
-                    <span>播放队列</span>
-                    <span>0 首歌曲</span>
+                    <span>播放记录</span>
+                    <span><span id="queue-count">0</span> 首歌曲</span>
                 </div>
 
                 <!-- 直播频道 -->
@@ -90,7 +90,9 @@
                     </div>
                     <div class="channel-status">直播</div>
                 </div>
-                <div class="connection-status">已连接到马仔音乐台服务器</div>
+
+                <!-- 播放列表 -->
+                <ul id="playlist-container" class="playlist"></ul>
             </div>
 
             <!-- 右侧内容 -->
