@@ -1,9 +1,9 @@
 import os
 import time
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from openai import OpenAI
 
@@ -34,9 +34,18 @@ def get_openai_client() -> OpenAI:
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.laozhang.ai/v1")
     return OpenAI(api_key=api_key, base_url=base_url)
 
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误", "error": str(exc)})
+
 @app.get("/")
 def read_index():
     return FileResponse("static/index.html")
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "openai_configured": bool(os.getenv("OPENAI_API_KEY"))}
 
 @app.post("/api/request")
 def request_song(req: SongRequest):

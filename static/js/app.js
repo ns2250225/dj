@@ -233,11 +233,27 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail || '请求失败');
+                let detail = '请求失败';
+                try {
+                    const err = await response.json();
+                    detail = err.detail || detail;
+                } catch (e) {
+                    try {
+                        const text = await response.text();
+                        detail = text || detail;
+                    } catch (e2) {
+                    }
+                }
+                throw new Error(detail);
             }
             
-            const data = await response.json();
+            let data;
+            try {
+                data = await response.json();
+            } catch (e) {
+                const text = await response.text();
+                throw new Error(text || '响应不是有效的 JSON');
+            }
             
             // Add to Playlist
             addToPlaylist(data);
