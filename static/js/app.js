@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sendBtn = document.getElementById('send-btn');
     const chatContainer = document.getElementById('chat-container');
     const playPauseBtn = document.getElementById('play-pause-btn');
+    const nextBtn = document.getElementById('next-btn');
     const volumeSlider = document.getElementById('volume-slider');
     const playlistContainer = document.getElementById('playlist-container');
     const queueCount = document.getElementById('queue-count');
@@ -29,6 +30,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPlaying = false;
     let isTtsPlaying = false;
     let playlistHistory = [];
+    let currentPlaylist = [];
+    let currentSongIndex = 0;
+    let isGeneratingDj = false;
 
     // --- Theme Logic ---
     btnDark.addEventListener('click', () => {
@@ -76,6 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     playPauseBtn.addEventListener('click', () => {
+        if (isGeneratingDj) return;
         if (isTtsPlaying) {
             if (isPlaying) {
                 ttsPlayer.pause();
@@ -92,6 +97,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 musicPlayer.play();
                 setPlayState(true);
             }
+        }
+    });
+
+    nextBtn.addEventListener('click', () => {
+        if (currentPlaylist.length > 0) {
+            playNextSong();
         }
     });
 
@@ -148,7 +159,22 @@ document.addEventListener('DOMContentLoaded', () => {
         currentTrackStatus.textContent = '播放结束';
         progressFill.style.width = '0%';
         timeCurrent.textContent = '0:00';
+        playNextSong();
     });
+
+    function playNextSong() {
+        if (currentPlaylist.length === 0) return;
+        
+        currentSongIndex++;
+        if (currentSongIndex < currentPlaylist.length) {
+            playCurrentSong();
+        } else {
+            addMessage('dj', '歌单已经播放完毕啦，还有想听的吗？');
+            currentTrackStatus.textContent = '等待点歌...';
+            currentTrackName.textContent = '暂无播放';
+            currentPlaylist = [];
+        }
+    }
 
     // --- Playlist Logic ---
     function addToPlaylist(songData) {
@@ -216,20 +242,20 @@ document.addEventListener('DOMContentLoaded', () => {
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
-    async function requestSong(songName) {
-        if (!songName.trim()) return;
+    async function requestSong(keyword) {
+        if (!keyword.trim()) return;
         
-        addMessage('user', `我想听: ${songName}`);
+        addMessage('user', `我想听: ${keyword}`);
         songInput.value = '';
-        currentTrackStatus.textContent = '正在准备中...';
+        currentTrackStatus.textContent = '正在搜索歌单...';
         
         try {
-            const response = await fetch('/api/request', {
+            const response = await fetch('/api/search_playlist', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ song_name: songName })
+                body: JSON.stringify({ keyword: keyword })
             });
             
             if (!response.ok) {
@@ -241,33 +267,66 @@ document.addEventListener('DOMContentLoaded', () => {
                     try {
                         const text = await response.text();
                         detail = text || detail;
-                    } catch (e2) {
-                    }
+                    } catch (e2) {}
                 }
                 throw new Error(detail);
             }
             
-            let data;
-            try {
-                data = await response.json();
-            } catch (e) {
-                const text = await response.text();
-                throw new Error(text || '响应不是有效的 JSON');
+            const data = await response.json();
+            
+            if (data.songs && data.songs.length > 0) {
+                addMessage('dj', `为你找到歌单「${data.playlist_name}」，共 ${data.songs.length} 首歌曲，马上为你播放。`);
+                currentPlaylist = data.songs;
+                currentSongIndex = 0;
+                playCurrentSong();
+            } else {
+                addMessage('dj', `抱歉，没有在歌单中找到可以播放的歌曲。`);
+                currentTrackStatus.textContent = '无可用歌曲';
             }
             
-            // Add to Playlist
-            addToPlaylist(data);
+        } catch (error) {
+            addMessage('dj', `抱歉，出现了一些问题：${error.message}`);
+            currentTrackStatus.textContent = '出现错误';
+        }
+    }
+
+    async function playCurrentSong() {
+        if (currentSongIndex >= currentPlaylist.length) return;
+        
+        const song = currentPlaylist[currentSongIndex];
+        currentTrackStatus.textContent = '正在生成串词...';
+        currentTrackName.textContent = `${song.song_name} - ${song.artist}`;
+        
+        // 暂停当前播放
+        musicPlayer.pause();
+        ttsPlayer.pause();
+        setPlayState(false);
+        isGeneratingDj = true;
+        
+        try {
+            const response = await fetch('/api/generate_dj', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ song_name: song.song_name, artist: song.artist })
+            });
+            
+            if (!response.ok) throw new Error('生成串词失败');
+            const data = await response.json();
+            
+            isGeneratingDj = false;
+            
+            // 加入历史播放记录
+            addToPlaylist(song);
             
             // Add DJ Message
             addMessage('dj', data.dj_text);
             
             // Setup Audio
-            currentTrackName.textContent = `${data.song_name} - ${data.artist}`;
             currentTrackStatus.textContent = '正在播报串词...';
             
-            // Pause any current music
-            musicPlayer.pause();
-            musicPlayer.src = data.music_url;
+            musicPlayer.src = song.music_url;
             musicPlayer.load();
             
             ttsPlayer.src = data.tts_url;
@@ -286,8 +345,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
         } catch (error) {
-            addMessage('dj', `抱歉，出现了一些问题：${error.message}`);
-            currentTrackStatus.textContent = '出现错误';
+            isGeneratingDj = false;
+            addMessage('dj', `播放《${song.song_name}》时出现错误，将为你跳过。`);
+            setTimeout(playNextSong, 2000);
         }
     }
 

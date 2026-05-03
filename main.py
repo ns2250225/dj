@@ -24,8 +24,12 @@ if not os.path.exists("static/audio"):
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-class SongRequest(BaseModel):
+class PlaylistRequest(BaseModel):
+    keyword: str
+
+class DJRequest(BaseModel):
     song_name: str
+    artist: str
 
 def get_openai_client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
@@ -47,57 +51,80 @@ def read_index():
 def health():
     return {"status": "ok", "openai_configured": bool(os.getenv("OPENAI_API_KEY"))}
 
-@app.post("/api/request")
-def request_song(req: SongRequest):
-    song_name = req.song_name
+@app.post("/api/search_playlist")
+def search_playlist(req: PlaylistRequest):
+    keyword = req.keyword
     
-    # 1. 搜索网易云音乐
+    # 1. 搜索网易云音乐歌单
     search_url = "http://music.163.com/api/search/get/web"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
     data = {
-        "s": song_name,
-        "type": 1,
-        "limit": 10  # 增加搜索数量以筛选免费歌曲
+        "s": keyword,
+        "type": 1000,
+        "limit": 1
     }
     try:
         r = requests.post(search_url, data=data, headers=headers)
         res_json = r.json()
-        songs = res_json.get("result", {}).get("songs", [])
-        if not songs:
-            raise HTTPException(status_code=404, detail="未找到该歌曲")
+        playlists = res_json.get("result", {}).get("playlists", [])
+        if not playlists:
+            raise HTTPException(status_code=404, detail="未找到相关歌单")
         
-        # 寻找免费歌曲 (fee == 0 或者是 fee == 8)
-        # fee=0: 免费或无版权
-        # fee=1: VIP
-        # fee=4: 购买专辑
-        # fee=8: 低音质免费
-        free_song = None
-        for song in songs:
+        playlist_id = playlists[0]["id"]
+        
+        # 2. 获取歌单详情
+        detail_url = f"http://music.163.com/api/playlist/detail?id={playlist_id}"
+        r_detail = requests.post(detail_url, headers=headers)
+        detail_json = r_detail.json()
+        
+        tracks = detail_json.get("result", {}).get("tracks", [])
+        if not tracks:
+            raise HTTPException(status_code=404, detail="歌单中没有歌曲")
+            
+        result_songs = []
+        for song in tracks:
+            # 尽量选取免费歌曲 (fee == 0 or fee == 8)
             if song.get("fee") in [0, 8]:
-                free_song = song
-                break
+                song_id = song["id"]
+                song_title = song["name"]
+                artist_name = song["artists"][0]["name"] if song.get("artists") else "未知歌手"
+                music_url = f"http://music.163.com/song/media/outer/url?id={song_id}.mp3"
+                result_songs.append({
+                    "song_name": song_title,
+                    "artist": artist_name,
+                    "music_url": music_url
+                })
+        
+        if not result_songs:
+            # 如果没有完全免费的，退而求其次返回前几首
+            for song in tracks[:10]:
+                song_id = song["id"]
+                song_title = song["name"]
+                artist_name = song["artists"][0]["name"] if song.get("artists") else "未知歌手"
+                music_url = f"http://music.163.com/song/media/outer/url?id={song_id}.mp3"
+                result_songs.append({
+                    "song_name": song_title,
+                    "artist": artist_name,
+                    "music_url": music_url
+                })
                 
-        if not free_song:
-            # 如果没找到完全免费的，只能退而求其次用第一首（可能会播放失败）
-            free_song = songs[0]
-
-        song_id = free_song["id"]
-        song_title = free_song["name"]
-        artist_name = free_song["artists"][0]["name"] if free_song.get("artists") else "未知歌手"
-        music_url = f"http://music.163.com/song/media/outer/url?id={song_id}.mp3"
+        return {"playlist_name": playlists[0]["name"], "songs": result_songs}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"搜索音乐失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"搜索歌单失败: {str(e)}")
 
+@app.post("/api/generate_dj")
+def generate_dj(req: DJRequest):
+    song_title = req.song_name
+    artist_name = req.artist
     client = get_openai_client()
 
-    # 2. 生成DJ串词
+    # 1. 生成DJ串词
     try:
         from datetime import datetime
         now = datetime.now()
         date_str = now.strftime("%Y年%m月%d日")
-        # 模拟一些天气和心情状态（可以扩展为真实API，此处使用随机组合让串词更生动）
         import random
         weathers = ["阳光明媚", "微风和煦", "淅淅沥沥的小雨", "阴云密布", "晚风微凉", "繁星点点"]
         moods = ["放松", "怀旧", "有些疲惫", "充满期待", "平静", "略带伤感"]
@@ -116,23 +143,23 @@ def request_song(req: SongRequest):
 5. 最后以引出歌曲作为结尾。"""
 
         response = client.chat.completions.create(
-            model="gpt-4.1",
+            model="gpt-4o",
             messages=[
                 {"role": "user", "content": prompt}
             ]
         )
         dj_text = response.choices[0].message.content.strip()
     except Exception as e:
-        dj_text = f"这是为你点播的，{artist_name}的《{song_title}》，希望你喜欢。"
+        dj_text = f"这是为你准备的，{artist_name}的《{song_title}》，希望你喜欢。"
 
-    # 3. 生成TTS语音
+    # 2. 生成TTS语音
     try:
         tts_response = client.audio.speech.create(
             model="tts-1",
             voice="onyx",
             input=dj_text
         )
-        timestamp = int(time.time())
+        timestamp = int(time.time() * 1000)
         audio_filename = f"tts_{timestamp}.mp3"
         audio_filepath = os.path.join("static", "audio", audio_filename)
         tts_response.stream_to_file(audio_filepath)
@@ -141,9 +168,6 @@ def request_song(req: SongRequest):
         raise HTTPException(status_code=500, detail=f"生成语音失败: {str(e)}")
 
     return {
-        "song_name": song_title,
-        "artist": artist_name,
-        "music_url": music_url,
         "dj_text": dj_text,
         "tts_url": tts_url
     }
